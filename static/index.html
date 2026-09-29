@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SafeCleanup</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <h1>SafeCleanup</h1>
+  <nav>
+    <button class="tab-btn active" data-tab="programs">Installed Programs</button>
+    <button class="tab-btn" data-tab="storage">Storage Explorer</button>
+    <button class="tab-btn" data-tab="onedrive">OneDrive</button>
+    <button id="quit-app" class="quit-btn" title="Stop SafeCleanup">Quit</button>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside id="sidebar">
+    <h2>Disk usage <span id="sidebar-drive" class="muted"></span></h2>
+    <div id="storage-bar"></div>
+    <ul id="storage-legend"></ul>
+    <p class="hint">Click a segment to explore it.</p>
+  </aside>
+
+  <main>
+    <section id="tab-programs" class="tab-panel active">
+      <div class="toolbar">
+        <input id="app-search" type="search" placeholder="Filter apps..." />
+        <select id="app-type-filter">
+          <option value="">All types</option>
+          <option value="installer">Installer apps</option>
+          <option value="uwp">Store apps</option>
+          <option value="files_only">Files only (no uninstaller)</option>
+        </select>
+        <button id="refresh-apps">Refresh list</button>
+        <span id="apps-status" class="status"></span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="name">Name</th>
+            <th data-sort="publisher">Publisher</th>
+            <th>Type</th>
+            <th data-sort="size_bytes" class="col-size">Size</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="apps-body"></tbody>
+      </table>
+    </section>
+
+    <section id="tab-storage" class="tab-panel">
+      <div class="toolbar">
+        <div id="storage-breadcrumb" class="breadcrumb"></div>
+        <button id="pick-folder">Browse folder...</button>
+        <button id="refresh-folder">Refresh sizes</button>
+        <span id="storage-status" class="status"></span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>What is this</th>
+            <th class="col-size">Size</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="storage-body"></tbody>
+      </table>
+    </section>
+
+    <section id="tab-onedrive" class="tab-panel">
+      <div class="toolbar">
+        <div id="onedrive-breadcrumb" class="breadcrumb"></div>
+        <button id="refresh-onedrive">Refresh sizes</button>
+        <span id="onedrive-status" class="status"></span>
+      </div>
+      <p id="onedrive-missing" class="hint hidden">No OneDrive folder was detected on this account.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>What is this</th>
+            <th class="col-size">Size</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="onedrive-body"></tbody>
+      </table>
+    </section>
+  </main>
+</div>
+
+<div id="modal-backdrop" class="hidden">
+  <div id="modal">
+    <h2 id="modal-title"></h2>
+    <p id="modal-body"></p>
+    <div class="modal-actions">
+      <button id="modal-cancel">Cancel</button>
+      <button id="modal-confirm" class="danger"></button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

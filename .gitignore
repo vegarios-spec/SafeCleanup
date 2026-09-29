@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+size_cache.json
+error.log
+build/
+dist/
+*.spec
+req.json
+server_test.log
+SafeCleanup.exe
