@@ -11,7 +11,10 @@ plain HTML/JS dashboard at `http://127.0.0.1:8765`.
 
 Grab `SafeCleanup.exe` from the [Releases](../../releases) page and double-click
 it. No Python installation needed — it's a self-contained executable. It opens
-your default browser to the dashboard; click **Quit** in the app when you're done.
+as its own standalone app window (using the Windows WebView2 runtime — already
+built into Windows 10/11, no browser involved); click **Quit** in the app when
+you're done. If WebView2 isn't available for some reason, it automatically
+falls back to opening the dashboard in your default browser instead.
 
 ## What it does
 
@@ -52,16 +55,22 @@ that category.
 
 ## Running from source
 
-Requires Python 3.10+ (stdlib only, no pip packages needed to run):
+Requires Python 3.10+. The server itself needs no pip packages:
 
 ```
 python server.py
 ```
 
+For the standalone app window (instead of opening in your browser), also install:
+
+```
+pip install pywebview
+```
+
 ## Building the .exe
 
 ```
-pip install pyinstaller
+pip install pyinstaller pywebview
 python -m PyInstaller --onefile --windowed --add-data "static;static" --name SafeCleanup server.py
 ```
 

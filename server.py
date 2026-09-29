@@ -1,9 +1,13 @@
 """
 SafeCleanup - local disk space / app uninstall dashboard.
 
-Everything here is stdlib-only (no pip installs needed). Run with:
+The server itself is stdlib-only. Run with:
     python server.py
-then open http://localhost:8765 in your browser.
+
+If the optional `pywebview` package is installed, this opens as its own native
+app window (via the Windows WebView2 runtime) - no browser involved. Without
+it (or if WebView2 fails to start), it automatically falls back to opening
+http://localhost:8765 in your default browser instead.
 
 What it finds (Programs tab):
   - Classic installed apps (Windows registry Uninstall keys) -> real uninstaller.
@@ -41,6 +45,13 @@ import winreg
 from ctypes import wintypes
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+
+try:
+    import webview  # pywebview - native app window (Edge WebView2), no browser needed
+    HAS_WEBVIEW = True
+except Exception:
+    webview = None
+    HAS_WEBVIEW = False
 
 PORT = 8765
 
@@ -1002,28 +1013,69 @@ class Handler(BaseHTTPRequestHandler):
 
 
 _server_instance = None
+_webview_window = None
 
 
 def _shutdown_server():
     time.sleep(0.3)  # let the /api/shutdown response finish sending first
-    if _server_instance is not None:
-        _server_instance.shutdown()
+    try:
+        if _server_instance is not None:
+            _server_instance.shutdown()
+    except Exception as exc:
+        _log_error(exc)
+    try:
+        if _webview_window is not None:
+            _webview_window.destroy()
+    except Exception as exc:
+        _log_error(exc)
+
+
+def _log_error(exc: Exception):
+    try:
+        import traceback
+        ERROR_LOG.write_text(traceback.format_exc(), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def main():
-    global _server_instance
+    global _server_instance, _webview_window
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     _server_instance = server
     url = f"http://127.0.0.1:{PORT}/"
-    print(f"SafeCleanup running at {url}")
-    print("Press Ctrl+C to stop.")
-    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.shutdown()
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    opened_native_window = False
+    if HAS_WEBVIEW:
+        try:
+            storage_path = DATA_DIR / "webview_data"
+            storage_path.mkdir(parents=True, exist_ok=True)
+            _webview_window = webview.create_window(
+                "SafeCleanup", url, width=1200, height=820, min_size=(820, 560)
+            )
+            opened_native_window = True
+            # Blocks until the window is closed (or /api/shutdown destroys it).
+            webview.start(storage_path=str(storage_path), private_mode=False)
+        except Exception as exc:
+            # WebView2 can fail to initialize in some environments (missing runtime,
+            # locked-down policy, etc.) - fall back to opening the dashboard in the
+            # default browser instead of crashing.
+            _log_error(exc)
+            opened_native_window = False
+            _webview_window = None
+
+    if not opened_native_window:
+        print(f"SafeCleanup running at {url}")
+        print("Press Ctrl+C to stop.")
+        webbrowser.open(url)
+        try:
+            server_thread.join()
+        except KeyboardInterrupt:
+            pass
+
+    server.shutdown()
 
 
 if __name__ == "__main__":
@@ -1032,9 +1084,8 @@ if __name__ == "__main__":
         # at least leave a trace instead of vanishing silently.
         try:
             main()
-        except Exception:
-            import traceback
-            ERROR_LOG.write_text(traceback.format_exc(), encoding="utf-8")
+        except Exception as exc:
+            _log_error(exc)
             raise
     else:
         main()

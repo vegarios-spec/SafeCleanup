@@ -8,3 +8,4 @@ dist/
 req.json
 server_test.log
 SafeCleanup.exe
+webview_data/
