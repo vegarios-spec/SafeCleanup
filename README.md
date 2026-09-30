@@ -1,5 +1,8 @@
 # SafeCleanup
 
+**[⬇ Download SafeCleanup.exe](../../releases/latest/download/SafeCleanup.exe)**
+— no install, just download and double-click. ([All releases](../../releases))
+
 A local, offline Windows dashboard for finding out what's taking up space on your
 PC and safely removing it — without touching anything that could break Windows.
 
