@@ -63,15 +63,27 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 
 // ---------------- Generic folder browser (Storage Explorer + OneDrive tabs) ----------------
 
-function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath }) {
+function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath, warningId }) {
   const elBody = document.getElementById(bodyId);
   const elBreadcrumb = document.getElementById(breadcrumbId);
   const elStatus = document.getElementById(statusId);
+  const elWarning = warningId ? document.getElementById(warningId) : null;
 
   let entries = [];
   let mode = "home"; // "home" | "real" | "virtual"
   let currentPath = null;
   let virtualLabel = null;
+
+  function setWarning(msg) {
+    if (!elWarning) return;
+    if (msg) {
+      elWarning.textContent = msg;
+      elWarning.classList.remove("hidden");
+    } else {
+      elWarning.textContent = "";
+      elWarning.classList.add("hidden");
+    }
+  }
 
   function renderBreadcrumb() {
     elBreadcrumb.innerHTML = "";
@@ -111,7 +123,7 @@ function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath })
       const b = document.createElement("button");
       b.textContent = seg;
       const target = acc;
-      b.addEventListener("click", () => browse(target));
+      b.addEventListener("click", () => browse(target, { keepWarning: true }));
       elBreadcrumb.appendChild(b);
     });
   }
@@ -126,6 +138,7 @@ function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath })
     mode = "home";
     currentPath = null;
     elStatus.textContent = "";
+    setWarning(null);
     renderBreadcrumb();
     try {
       const res = await fetch("/api/drives");
@@ -150,7 +163,8 @@ function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath })
     }
   }
 
-  async function browse(path) {
+  async function browse(path, { keepWarning = false } = {}) {
+    if (!keepWarning) setWarning(null);
     elStatus.textContent = "Loading...";
     try {
       const res = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
@@ -169,7 +183,8 @@ function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath })
     }
   }
 
-  async function browseVirtual(label, paths) {
+  async function browseVirtual(label, paths, warning = null) {
+    setWarning(warning);
     elStatus.textContent = "Loading...";
     try {
       const res = await fetch(`/api/entries?paths=${encodeURIComponent(JSON.stringify(paths || []))}`);
@@ -217,7 +232,7 @@ function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath })
         const link = document.createElement("button");
         link.className = "link";
         link.textContent = "📁 " + displayName;
-        link.addEventListener("click", () => browse(entry.path));
+        link.addEventListener("click", () => browse(entry.path, { keepWarning: true }));
         wrap.appendChild(link);
       } else {
         const span = document.createElement("span");
@@ -327,7 +342,7 @@ function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath })
 
 const storageBrowser = makeBrowser({
   bodyId: "storage-body", breadcrumbId: "storage-breadcrumb", statusId: "storage-status",
-  homeLabel: "Drives", getHomePath: () => null,
+  homeLabel: "Drives", getHomePath: () => null, warningId: "storage-warning",
 });
 
 let oneDriveRootPath = null;
@@ -585,7 +600,7 @@ function renderSidebar() {
   const otherSize = allLoaded ? Math.max(0, overviewState.used - knownSum) : null;
 
   const rows = overviewState.categories.map((c) => ({ id: c.id, label: c.label, size: c.size_bytes, cat: c, clickable: true }));
-  rows.push({ id: "other", label: "Other / uncategorized", size: otherSize, clickable: false });
+  rows.push({ id: "other", label: "Other / uncategorized", size: otherSize, clickable: true, cat: { id: "other" } });
   rows.push({ id: "free", label: "Free space", size: overviewState.free, clickable: false });
 
   const total = overviewState.total || 1;
@@ -644,6 +659,27 @@ function handleCategoryClick(cat) {
     activateTab("storage");
     storageBrowser.hasLoaded = true;
     storageBrowser.browseVirtual("Cache & temp data", cat.paths || []);
+  } else if (cat.id === "other") {
+    activateTab("storage");
+    storageBrowser.hasLoaded = true;
+    browseOtherCategory();
+  }
+}
+
+const OTHER_CATEGORY_WARNING =
+  "These items aren't recognized by SafeCleanup - they don't match Windows, an installed app, " +
+  "your personal folders, cache/temp data, or OneDrive. Some could still be important (personal " +
+  "data, or files an app quietly relies on) even though nothing matched. Check each item carefully " +
+  "before deleting anything here.";
+
+async function browseOtherCategory() {
+  try {
+    const res = await fetch("/api/overview/other");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to load");
+    storageBrowser.browseVirtual("Other / uncategorized", data.paths || [], OTHER_CATEGORY_WARNING);
+  } catch (e) {
+    toast("Could not load uncategorized files.", true);
   }
 }
 

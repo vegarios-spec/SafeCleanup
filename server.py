@@ -351,11 +351,25 @@ def find_unmanaged_installs(known_apps):
     return results
 
 
+_all_apps_cache = {"apps": [], "ts": 0}
+_all_apps_lock = threading.Lock()
+
+
 def get_all_apps(force=False):
-    installed = list_installed_apps(force=force)
-    uwp = list_uwp_apps(force=force)
-    unmanaged = find_unmanaged_installs(installed + uwp)
-    return installed + uwp + unmanaged
+    # classify_path() calls this once per item it classifies, and scans (like the
+    # "Other" category listing) can classify hundreds of items in one request -
+    # cache the combined result briefly so that doesn't mean hundreds of repeated
+    # find_unmanaged_installs() filesystem walks.
+    with _all_apps_lock:
+        if not force and _all_apps_cache["apps"] and (time.time() - _all_apps_cache["ts"] < 30):
+            return _all_apps_cache["apps"]
+        installed = list_installed_apps(force=force)
+        uwp = list_uwp_apps(force=force)
+        unmanaged = find_unmanaged_installs(installed + uwp)
+        apps = installed + uwp + unmanaged
+        _all_apps_cache["apps"] = apps
+        _all_apps_cache["ts"] = time.time()
+        return apps
 
 
 def find_app_by_id(app_id):
@@ -581,15 +595,19 @@ def classify_path(path: Path):
         return {
             "level": "app_data_unknown",
             "label": "App data (unrecognized)",
-            "reason": "Looks like settings/data for an app that isn't in your installed-apps list "
-                      "(could be a portable app or leftover from an uninstall). Check the folder name first.",
+            "reason": "Settings/data for an app that isn't in your installed-apps list (could be a "
+                      "portable app, a leftover from an uninstall, or an app that's still installed "
+                      "but wasn't detected). It could still be important - check the folder name "
+                      "first, and avoid deleting it if you're not sure.",
             "blocked": False,
         }
 
     return {
         "level": "unknown",
         "label": "Unclassified",
-        "reason": "Not automatically recognized. Delete with care.",
+        "reason": "Not recognized by SafeCleanup. This could be an important personal or "
+                  "app-related file that just doesn't match any known pattern - make sure "
+                  "you know what it is before deleting it.",
         "blocked": False,
     }
 
@@ -725,6 +743,84 @@ def compute_category_size(cat_id, force=False):
 
 
 # ---------------------------------------------------------------------------
+# "Other / uncategorized" - top-level items not claimed by Windows, Apps,
+# Personal, Cache or OneDrive (the sidebar's "Other" slice is just the size
+# left over after subtracting those; this is what that leftover actually is).
+# ---------------------------------------------------------------------------
+
+_OTHER_SKIP_DRIVE_DIRS = {
+    "windows", "windows.old", "program files", "program files (x86)",
+    "users", "$recycle.bin", "system volume information", "recovery",
+    "perflogs", "boot", "documents and settings", "config.msi", "msocache",
+}
+_OTHER_SKIP_DRIVE_FILES = {
+    "pagefile.sys", "hiberfil.sys", "swapfile.sys", "dumpstack.log.tmp",
+    "bootnxt", "bootmgr", "bootmgr.efi",
+}
+_OTHER_SKIP_PROFILE_NAMES = {s.lower() for s in PERSONAL_SUBDIRS} | {"appdata", "onedrive"}
+
+
+def build_other_candidate_paths():
+    paths = []
+    seen = set()
+
+    def add(p: Path):
+        key = str(p).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        if p.exists():
+            paths.append(p)
+
+    try:
+        with os.scandir(SYSTEM_DRIVE) as it:
+            for entry in it:
+                name_l = entry.name.lower()
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                if is_dir and name_l in _OTHER_SKIP_DRIVE_DIRS:
+                    continue
+                if not is_dir and name_l in _OTHER_SKIP_DRIVE_FILES:
+                    continue
+                p = Path(entry.path)
+                if ONEDRIVE_ROOT and p == ONEDRIVE_ROOT:
+                    continue
+                add(p)
+    except OSError:
+        pass
+
+    try:
+        with os.scandir(USER_PROFILE) as it:
+            for entry in it:
+                name_l = entry.name.lower()
+                if name_l in _OTHER_SKIP_PROFILE_NAMES or name_l.startswith("ntuser"):
+                    continue
+                add(Path(entry.path))
+    except OSError:
+        pass
+
+    # Unrecognized app data: folders inside AppData\Local / Roaming that classify_path
+    # doesn't already attribute to a known app or to cache/temp.
+    for sub in ("Local", "Roaming"):
+        appdata_dir = USER_PROFILE / "AppData" / sub
+        try:
+            with os.scandir(appdata_dir) as it:
+                for entry in it:
+                    p = Path(entry.path)
+                    if sub == "Local" and any(p == r or _is_relative_to(p, r) for r in CANDIDATE_INSTALL_ROOTS):
+                        continue
+                    risk = classify_path(p)
+                    if risk["level"] in ("unknown", "app_data_unknown"):
+                        add(p)
+        except OSError:
+            pass
+
+    return paths
+
+
+# ---------------------------------------------------------------------------
 # Drives
 # ---------------------------------------------------------------------------
 
@@ -857,6 +953,10 @@ class Handler(BaseHTTPRequestHandler):
                 if size is None:
                     return self._send_error_json("Unknown category", 404)
                 return self._send_json({"id": cat_id, "size_bytes": size})
+
+            if parsed.path == "/api/overview/other":
+                paths = build_other_candidate_paths()
+                return self._send_json({"paths": [str(p) for p in paths]})
 
             if parsed.path == "/api/apps":
                 force = qs.get("refresh", ["0"])[0] == "1"

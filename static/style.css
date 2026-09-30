@@ -149,6 +149,22 @@ nav { display: flex; gap: 4px; align-items: center; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
 .hint.hidden { display: none; }
 
+.warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border: 1px solid var(--warn-text);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.warning-banner::before { content: "⚠️"; flex: 0 0 auto; }
+.warning-banner.hidden { display: none; }
+
 main { flex: 1; min-width: 0; }
 
 .tab-panel { display: none; }
