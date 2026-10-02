@@ -425,6 +425,35 @@ def uninstall_app_dispatch(app_id):
     raise ValueError("Unknown app type.")
 
 
+def force_delete_app_files(app_id):
+    """Skip the app's own uninstaller entirely and just Recycle-Bin its install
+    folder. Only meant for when the real uninstaller is broken/missing - still
+    refuses anything classify_path flags as a Windows-critical path, but lets
+    through the normal "belongs to an installed app" block when the app in
+    question is this exact app (that block exists to protect OTHER apps' files,
+    not to stop you from removing your own when its uninstaller can't)."""
+    app = find_app_by_id(app_id)
+    if not app:
+        raise ValueError("App not found - refresh the list and try again.")
+    loc = app.get("install_location")
+    if not loc:
+        raise ValueError("No install folder is recorded for this app - nothing to force-delete.")
+    p = Path(loc)
+    if not p.exists():
+        raise ValueError("That folder is already gone.")
+    risk = classify_path(p)
+    if risk["level"] == "system_critical":
+        raise ValueError(f"Refusing to force-delete: {risk['reason']}")
+    if risk["blocked"] and risk.get("app_id") not in (None, app_id):
+        raise ValueError(f"Blocked: {risk['reason']}")
+    send_to_recycle_bin(p)
+    with _cache_lock:
+        _size_cache.pop(str(p).lower(), None)
+    _save_cache()
+    return (f"Moved {app['name']}'s files to the Recycle Bin, skipping its uninstaller. "
+            f"Registry entries, shortcuts, or background services it installed may still remain.")
+
+
 # ---------------------------------------------------------------------------
 # Size cache
 # ---------------------------------------------------------------------------
@@ -1059,6 +1088,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send_error_json("Missing app_id")
                 try:
                     message = uninstall_app_dispatch(app_id)
+                except ValueError as exc:
+                    return self._send_error_json(str(exc), 400)
+                return self._send_json({"ok": True, "message": message})
+
+            if parsed.path == "/api/force-delete-app":
+                app_id = body.get("app_id")
+                if not app_id:
+                    return self._send_error_json("Missing app_id")
+                try:
+                    message = force_delete_app_files(app_id)
                 except ValueError as exc:
                     return self._send_error_json(str(exc), 400)
                 return self._send_json({"ok": True, "message": message})

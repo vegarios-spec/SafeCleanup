@@ -27,7 +27,11 @@ function showModal({ title, body, confirmLabel, onConfirm }) {
   document.getElementById("modal-title").textContent = title;
   document.getElementById("modal-body").textContent = body;
   const confirmBtn = document.getElementById("modal-confirm");
-  confirmBtn.textContent = confirmLabel;
+  const cancelBtn = document.getElementById("modal-cancel");
+  confirmBtn.disabled = false;
+  cancelBtn.disabled = false;
+  confirmBtn.innerHTML = "";
+  confirmBtn.appendChild(document.createTextNode(confirmLabel));
   backdrop.classList.remove("hidden");
 
   const cleanup = () => {
@@ -35,8 +39,20 @@ function showModal({ title, body, confirmLabel, onConfirm }) {
     confirmBtn.removeEventListener("click", onConfirmClick);
     cancelBtn.removeEventListener("click", onCancelClick);
   };
-  const onConfirmClick = () => { cleanup(); onConfirm(); };
-  const cancelBtn = document.getElementById("modal-cancel");
+  const onConfirmClick = async () => {
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    confirmBtn.innerHTML = "";
+    const spinner = document.createElement("span");
+    spinner.className = "spinner";
+    confirmBtn.appendChild(spinner);
+    confirmBtn.appendChild(document.createTextNode("Working..."));
+    try {
+      await onConfirm();
+    } finally {
+      cleanup();
+    }
+  };
   const onCancelClick = () => cleanup();
 
   confirmBtn.addEventListener("click", onConfirmClick);
@@ -483,6 +499,7 @@ function renderApps() {
     tr.appendChild(tdSize);
 
     const tdAction = document.createElement("td");
+    tdAction.className = "actions-cell";
     const btn = document.createElement("button");
     btn.textContent = { installer: "Uninstall", uwp: "Remove", files_only: "Delete files" }[app.type] || "Remove";
     const canAct = app.type === "files_only"
@@ -491,6 +508,15 @@ function renderApps() {
     btn.disabled = !canAct;
     btn.addEventListener("click", () => confirmUninstall(app));
     tdAction.appendChild(btn);
+
+    if (app.type === "installer" && app.install_location) {
+      const forceBtn = document.createElement("button");
+      forceBtn.className = "secondary";
+      forceBtn.textContent = "Force delete…";
+      forceBtn.title = "Skip the uninstaller and just delete its files - only if the uninstaller is broken or missing";
+      forceBtn.addEventListener("click", () => confirmForceDelete(app));
+      tdAction.appendChild(forceBtn);
+    }
     tr.appendChild(tdAction);
 
     body.appendChild(tr);
@@ -526,6 +552,37 @@ function confirmUninstall(app) {
         if (!res.ok) throw new Error(data.error || "Failed");
         toast(data.message);
         if (app.type !== "installer") loadApps(true);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    },
+  });
+}
+
+function confirmForceDelete(app) {
+  showModal({
+    title: `Force-delete ${app.name}'s files?`,
+    body: `This skips ${app.name}'s own uninstaller completely and just moves its install folder ` +
+          `straight to the Recycle Bin:\n${app.install_location}\n\n` +
+          `Only do this if the real uninstaller is broken, hangs, or is missing - this is NOT a normal ` +
+          `uninstall. It will likely leave behind:\n` +
+          `  - Registry entries (Windows may still list it as "installed")\n` +
+          `  - Start Menu shortcuts and file associations\n` +
+          `  - Background services, drivers, or scheduled tasks it set up\n` +
+          `  - Shared files or settings other software might expect to find\n\n` +
+          `If there's any chance the normal uninstaller could still work, try that first.`,
+    confirmLabel: "Force delete files",
+    onConfirm: async () => {
+      try {
+        const res = await fetch("/api/force-delete-app", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app_id: app.id }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed");
+        toast(data.message);
+        loadApps(true);
       } catch (e) {
         toast(e.message, true);
       }
