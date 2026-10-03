@@ -322,12 +322,23 @@ function makeBrowser({ bodyId, breadcrumbId, statusId, homeLabel, getHomePath, w
     });
   }
 
+  const ONEDRIVE_SPECIAL_FOLDERS = ["Desktop", "Documents", "Pictures", "Screenshots", "Music", "Videos"];
+
   function confirmUnlink(entry) {
     const label = entry.name || entry.path;
+    const isSpecialRoot = oneDriveRootPath && ONEDRIVE_SPECIAL_FOLDERS.some(
+      (f) => entry.path.toLowerCase() === `${oneDriveRootPath}\\${f}`.toLowerCase()
+    );
+    const body = isSpecialRoot
+      ? `Windows treats "${label}" as a special system folder, not just an ordinary OneDrive subfolder. ` +
+        `Unlinking it moves your files to the normal local ${label} folder and updates Windows' ${label} ` +
+        `setting to match, so it keeps working like a real ${label} folder - it stops syncing to OneDrive, ` +
+        `but nothing is deleted.`
+      : `This moves it out of your OneDrive folder into "Files Unlinked from OneDrive" in your user folder. ` +
+        `It stops syncing to the cloud, but nothing is deleted.`;
     showModal({
       title: `Unlink "${label}" from OneDrive?`,
-      body: `This moves it out of your OneDrive folder into "Files Unlinked from OneDrive" in your user folder. ` +
-            `It stops syncing to the cloud, but nothing is deleted.`,
+      body,
       confirmLabel: "Unlink",
       onConfirm: async () => {
         try {

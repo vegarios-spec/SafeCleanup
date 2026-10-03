@@ -40,6 +40,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import uuid
 import webbrowser
 import winreg
 from ctypes import wintypes
@@ -680,9 +681,76 @@ def send_to_recycle_bin(path: Path):
         raise OSError("Delete was aborted.")
 
 
+# ---------------------------------------------------------------------------
+# Windows "known folder" redirection (Desktop/Documents/Pictures/etc.)
+# ---------------------------------------------------------------------------
+# OneDrive doesn't just sync these folders - it makes itself THE registered
+# location for them, via SHSetKnownFolderPath. Just moving the files back out
+# (like any other OneDrive subfolder) leaves Windows still pointed at the now-
+# missing OneDrive path, which is what breaks Explorer/Desktop with "Location
+# is not available". Unlinking one of these root folders has to also move the
+# known-folder registration itself, the same way turning off OneDrive's own
+# "back up this folder" setting does.
+
+KNOWN_FOLDER_IDS = {
+    "Desktop": "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}",
+    "Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
+    "Pictures": "{33E28130-4E1E-4676-835A-98395C3BC3BB}",
+    "Music": "{4BD8D571-6D19-48D3-BE97-422220080E43}",
+    "Videos": "{18989B1D-99B5-455B-841C-AB7C74E4DDFC}",
+    "Screenshots": "{B7BEDE81-DF94-4682-A7D8-57A52620B86F}",
+}
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("bytes", ctypes.c_ubyte * 16)]
+
+
+def _guid(guid_str):
+    return _GUID((ctypes.c_ubyte * 16)(*uuid.UUID(guid_str).bytes_le))
+
+
+def set_known_folder_path(name: str, new_path: Path) -> bool:
+    """Point a Windows known folder (Desktop, Documents, ...) at new_path.
+    new_path must already exist - SHSetKnownFolderPath refuses otherwise."""
+    guid_str = KNOWN_FOLDER_IDS.get(name)
+    if not guid_str:
+        return False
+    fn = ctypes.windll.shell32.SHSetKnownFolderPath
+    fn.argtypes = [ctypes.POINTER(_GUID), wintypes.DWORD, wintypes.HANDLE, wintypes.LPCWSTR]
+    fn.restype = ctypes.c_long
+    hr = fn(ctypes.byref(_guid(guid_str)), 0, None, str(new_path))
+    return hr == 0
+
+
 def unlink_from_onedrive(path: Path):
     if not ONEDRIVE_ROOT or not _is_relative_to(path, ONEDRIVE_ROOT):
         raise ValueError("That item isn't inside your OneDrive folder.")
+
+    for kf in ONEDRIVE_KNOWN_FOLDERS:
+        if path == ONEDRIVE_ROOT / kf:
+            target = USER_PROFILE / kf
+            if target.exists() and any(target.iterdir()):
+                raise ValueError(
+                    f'"{target}" already exists and has files in it - move or rename it '
+                    f"first, then try unlinking {kf} again."
+                )
+            target.mkdir(parents=True, exist_ok=True)
+            for item in list(path.iterdir()):
+                shutil.move(str(item), str(target / item.name))
+            path.rmdir()
+            with _cache_lock:
+                _size_cache.pop(str(path).lower(), None)
+            _save_cache()
+            if not set_known_folder_path(kf, target):
+                raise ValueError(
+                    f"Your files were moved to {target}, but Windows' {kf} setting couldn't be "
+                    f"updated automatically. Fix it yourself: in File Explorer, right-click "
+                    f'"{kf}" in the left sidebar, choose Properties, open the Location tab, and '
+                    f"set it to {target}."
+                )
+            return target
+
     rel = path.relative_to(ONEDRIVE_ROOT)
     target = UNLINKED_ROOT / rel
     if target.exists():
